@@ -1,3 +1,5 @@
+
+
 # Concurrency in C
 
 Concurrency is the ability of a computer system to execute multiple sequences of instructions simultaneously. This does not necessarily mean they are running at the exact same time (as in parallelism) but that the system manages multiple tasks to appear as though they are being executed at the same time.
@@ -77,6 +79,12 @@ int main(void) {
     return 0;
 }
 ```
+
+Output:
+```
+Hello from the worker thread!
+Worker finished; main exiting.
+```
 Why the `pthread_join`? When `main` returns (or the process calls `exit`), the *entire* process terminates, taking every thread with it. Without the join, the program might exit before `worker` ever prints.
 
 **Example: Running many threads**
@@ -101,6 +109,23 @@ int main(void) {
 
     return 0;
 }
+```
+
+Output 1:
+```
+Thread 0 reporting in
+Thread 1 reporting in
+Thread 3 reporting in
+Thread 4 reporting in
+Thread 2 reporting in
+```
+Output 2:
+```
+Thread 1 reporting in
+Thread 3 reporting in
+Thread 4 reporting in
+Thread 2 reporting in
+Thread 0 reporting in
 ```
 The output order is **not deterministic** — the scheduler decides when each thread runs. Never assume an ordering unless you enforce one.
 
@@ -150,9 +175,9 @@ int main(void) {
 
 void *square(void *arg) {
     int n = *(int *)arg;
-    int *result = malloc(sizeof *result);   /* heap: survives the thread */
+    int *result = malloc(sizeof *result);
     if (result) *result = n * n;
-    return result;                           /* becomes join's retval  */
+    return result;
 }
 
 int main(void) {
@@ -160,13 +185,18 @@ int main(void) {
     pthread_t tid;
     pthread_create(&tid, NULL, square, &n);
     void *ret;
-    pthread_join(tid, &ret);                 /* ret <- what square returned */
+    pthread_join(tid, &ret);
     if (ret) {
         printf("%d squared is %d\n", n, *(int *)ret);
-        free(ret);                           /* Don't forget to free the allocated memory */
+        free(ret); 
     }
     return 0;
 }
+```
+
+Output:
+```
+7 squared is 49
 ```
 
 **Note:** A thread can also finish by calling `pthread_exit(retval)`, which is equivalent to returning `retval` from `start_routine` but works from any depth of the call stack.
@@ -195,9 +225,9 @@ Every thread is created either joinable (the default) or detached. This choice d
 
 static void *worker(void *arg)
 {
-    printf("worker: running for 3 seconds\n");
+    printf("Worker: running for 3 seconds\n");
     sleep(3);
-    printf("worker: finished\n");
+    printf("Worker: finished\n");
     return (void *)(long)99;
 }
 
@@ -206,30 +236,38 @@ int main(void)
     pthread_t tid;
     pthread_create(&tid, NULL, worker, NULL);
 
-    // Deadline is ABSOLUTE, not a duration: now + 1 second.
+    /* Deadline is ABSOLUTE, not a duration: now + 1 second. */
     struct timespec deadline;
     clock_gettime(CLOCK_REALTIME, &deadline);
     deadline.tv_sec += 1;
 
-    // Attempt 1: worker needs 3 s, so this times out after 1s
+    /* Attempt 1: worker needs 3 s, so this times out after 1 s. */
     int rc = pthread_timedjoin_np(tid, NULL, &deadline);
     if (rc == ETIMEDOUT)
-        printf("main:   timed out after 1 s, worker still running\n");
+        printf("Main:   timed out after 1 s, worker still running\n");
 
-    // The thread is still joinable and MUST be reaped.
-    // Try again with a later deadline (now + 5 s), which this time succeeds.
+    /* The thread is still joinable and MUST be reaped. Try again with a
+       later deadline (now + 5 s), which this time succeeds. */
     clock_gettime(CLOCK_REALTIME, &deadline);
     deadline.tv_sec += 5;
 
     void *ret;
     rc = pthread_timedjoin_np(tid, &ret, &deadline);
     if (rc == 0)
-        printf("main:   joined in time, worker returned %ld\n", (long)ret);
+        printf("Main:   joined in time, worker returned %ld\n", (long)ret);
     else if (rc == ETIMEDOUT)
-        printf("main:   still not done; giving up\n");
+        printf("Main:   still not done; giving up\n");
 
     return 0;
 }
+```
+
+Output:
+```
+Worker: running for 3 seconds
+Main:   timed out after 1 s, worker still running
+Worker: finished
+Main:   joined in time, worker returned 99
 ```
 
 **Example: Detach threads**
@@ -240,20 +278,24 @@ int main(void)
 #include <string.h>
 #include <unistd.h>
 
+/* Handle one "request". The argument is heap-allocated by the caller;
+   THIS thread owns it and must free it, because nobody will join to
+   clean up after it. */
 static void *handle_request(void *arg)
 {
     int id = *(int *)arg;
     free(arg);                         /* we own the argument now */
     pthread_detach(pthread_self());    /* detach myself: no one joins me */
-    printf("  [worker %d] handling request...\n", id);
+    printf("  [Worker %d] handling request...\n", id);
     sleep(1);                          /* simulate work */
-    printf("  [worker %d] done; resources auto-released on return\n", id);
+    printf("  [Worker %d] done; resources auto-released on return\n", id);
     return NULL;                       /* return value is discarded */
 }
 
 int main(void)
 {
-    printf("server: accepting 5 requests\n");
+    printf("Server: accepting 5 requests\n");
+
     for (int i = 1; i <= 5; i++) {
         int *id = malloc(sizeof *id);  /* each thread gets its own arg */
         *id = i;
@@ -264,11 +306,32 @@ int main(void)
             free(id);
             continue;
         }
+        /* We do NOT join tid. The worker detaches itself, so it cleans
+           up on its own. main immediately loops to the next request. */
     }
+
+    /* main can't join anyone, so give the detached workers time to run
+       before the process exits (which would kill them). In real code
+       this would be the server's normal event loop, not a sleep. */
     sleep(2);
-    printf("server: shutting down\n");
+    printf("Server: shutting down\n");
     return 0;
 }
+```
+Output:
+```
+Server: accepting 5 requests
+  [Worker 3] handling request...
+  [Worker 2] handling request...
+  [Worker 4] handling request...
+  [Worker 5] handling request...
+  [Worker 1] handling request...
+  [Worker 3] done; resources auto-released on return
+  [Worker 4] done; resources auto-released on return
+  [Worker 2] done; resources auto-released on return
+  [Worker 1] done; resources auto-released on return
+  [Worker 5] done; resources auto-released on return
+Server: shutting down
 ```
 
 ## 5. Terminating and Canceling Threads
@@ -289,7 +352,7 @@ static void *worker(void *arg)
 {
     (void)arg;
     for (int i = 1; ; i++) {
-        printf("working... %d\n", i);
+        printf("Working... %d\n", i);
         sleep(1);              /* cancellation point: cancel acts here */
     }
     return NULL;              /* never reached */
@@ -305,9 +368,17 @@ int main(void)
     pthread_cancel(tid);      /* request cancellation */
     pthread_join(tid, NULL);  /* wait for it to actually stop */
 
-    printf("worker canceled\n");
+    printf("Worker canceled\n");
     return 0;
 }
+```
+
+Output:
+```
+Working... 1
+Working... 2
+Working... 3
+Worker canceled
 ```
 
 **Example: Cleanup handlers**
@@ -318,7 +389,7 @@ int main(void)
 #include <unistd.h>
 
 static void cleanup(void *arg) {
-    printf("cleanup: freeing buffer\n");
+    printf("Cleanup: freeing buffer\n");
     free(arg);
 }
 
@@ -342,17 +413,17 @@ int main(void) {
     pthread_t tid;
     pthread_create(&tid, NULL, worker, NULL);
 
-    sleep(2);
+    sleep(5);
     pthread_cancel(tid);
-    pthread_join(tid, NULL);         
+    pthread_join(tid, NULL);
 
-    printf("worker canceled and joined\n");
+    printf("Worker canceled and joined\n");
     return 0;
 }
 ```
 
 
-## 5. Thread Attributes
+## 6. Thread Attributes
 The second argument in the `pthread` create function is an attribute object you can customize or leave as default by setting it to NULL.
 
 This is how you can customize the attributes object:
@@ -376,7 +447,7 @@ Key attributes:
 
 Each setter has a matching getter (`pthread_attr_getstacksize`, etc.). Setting a large stack matters for deeply recursive threads; setting a small one matters when you spawn thousands of threads and want to save address space.
 
-## 6. Thread Scheduling
+## 7. Thread Scheduling
 
 **Example: Thread scheduling**
 ```c
@@ -445,7 +516,7 @@ int main(void) {
 }
 ```
 
-## 7. Thread Pool
+## 8. Thread Pool
 
 ![Thread poll Concept](https://miro.medium.com/v2/resize:fit:720/format:webp/1*bW8heZuEzTDPpw1HmpNZmA.png)
 
@@ -462,14 +533,11 @@ Components:
 TODO
 ```
 
-## 8. Thread Synchronization
+## 9. Thread Synchronization
 
 Because threads share memory, concurrent access to the same data must be coordinated. Without it you get race conditions: results that depend on unpredictable scheduling. The canonical example is counter++, which is really read → add → write — three steps that can interleave between threads and lose updates.
 
 ```c
-/* race.c — demonstrates a lost-update race
-   Two threads each increment a shared counter 1,000,000 times.
-   The final value is almost never 2,000,000.                       */
 #include <pthread.h>
 #include <stdio.h>
 
@@ -493,7 +561,12 @@ int main(void) {
 }
 ```
 
-### 8.1 Mutexes
+```
+Output:
+counter = 1007751 (expected 2000000)
+```
+
+### 9.1 Mutexes
 A mutex (mutual exclusion lock) ensures that only one thread at a time executes a critical section. Lock before touching shared data, unlock after.
 
 ```c
@@ -531,6 +604,11 @@ int main(void) {
 }
 ```
 
+```
+Output:
+counter = 2000000
+```
+
 **Rules of thumb**
 - Keep critical sections short — hold the lock only as long as needed.
 - Always unlock on every path (including error returns). Cleanup handlers or a single-exit style help.
@@ -556,9 +634,11 @@ A **recursive** mutex lets one thread lock it repeatedly — useful when a locke
 
 Other useful mutex attributes: `setrobust` (recover a lock whose owner died) and `setprotocol` (priority inheritance, to combat priority inversion in real-time systems).
 
-### 8.2 Condition Variables
+### 9.2 Condition Variables
 
 **Example: Condition variables**
+
+A mutex protects data. A condition variable lets threads wait for a state without busy-polling. It always pairs with a mutex and a predicate (a boolean condition on shared data).
 
 ```c
 #include <pthread.h>
@@ -570,42 +650,52 @@ static int             ready = 0;                          /* 1. the DATA  */
 static pthread_mutex_t lock  = PTHREAD_MUTEX_INITIALIZER;  /* 2. its LOCK  */
 static pthread_cond_t  cond  = PTHREAD_COND_INITIALIZER;   /* 3. the SIGNAL*/
 
-static void *worker(void *arg)
-{
+static void* worker1(void *arg) {
     (void)arg;
-    printf("[worker] preparing data (5 s)...\n");
+    printf("[Worker 1] Working for 5 seconds...\n");
     sleep(5);
 
-    pthread_mutex_lock(&lock);      /* lock before touching `ready` */
-    ready = 1;                      /* change the state             */
-    printf("[worker] ready = 1, signaling\n");
-    pthread_cond_signal(&cond);     /* wake a waiter                */
-    pthread_mutex_unlock(&lock);    /* now the waiter can proceed   */
+    pthread_mutex_lock(&lock);
+    ready = 1;
+    printf("[Worker 1] ready = 1, signaling\n");
+    pthread_cond_signal(&cond);
+    pthread_mutex_unlock(&lock);
     return NULL;
 }
 
-int main(void)
-{
-    pthread_t tid;
-    pthread_create(&tid, NULL, worker, NULL);
-
-    pthread_mutex_lock(&lock);      /* lock before testing `ready` */
-    while (!ready) {                /* ALWAYS a while, never an if */
-        printf("[main]   ready == 0, going to sleep\n");
-        pthread_cond_wait(&cond, &lock);   /* unlock + sleep, then relock */
-        printf("[main]   woke up, re-checking ready\n");
+static void* worker2(void *arg) {
+    pthread_mutex_lock(&lock);
+    while (!ready) {
+        printf("[Worker 2] Ready value is 0. Waiting for value change\n");
+        pthread_cond_wait(&cond, &lock);    // Unlock and sleep until signal received
+        printf("[Worker 2] Woke up. Rechecking ready\n");
     }
-    printf("[main]   ready == 1, proceeding\n");
+    printf("[Worker 2] Out of while loop. Notice your while loop wasn't running all time.\n");
     pthread_mutex_unlock(&lock);
-    pthread_join(tid, NULL);
-    return 0;
 }
+
+int main(void) {
+    pthread_t tid1, tid2;
+    pthread_create(&tid1, NULL, worker1, NULL);
+    pthread_create(&tid2, NULL, worker2, NULL);
+    pthread_join(tid1, NULL);
+    pthread_join(tid2, NULL);
+}
+```
+
+Output:
+```
+[Worker 1] Working for 5 seconds...
+[Worker 2] Ready value is 0. Waiting for value change
+[Worker 1] ready = 1, signaling
+[Worker 2] Woke up. Rechecking ready
+[Worker 2] Out of while loop. Notice your while loop wasn't running all time.
 ```
 
 Ref:
 - https://www.geeksforgeeks.org/linux-unix/condition-wait-signal-multi-threading/
 
-## 8.3 Read-Write Locks
+## 9.3 Read-Write Locks
 
 A read-write lock in C using the POSIX threads (pthreads) library allows multiple threads to read a shared resource simultaneously while ensuring that only one thread can write at a time. This is particularly useful when the number of read operations is much higher than write operations, as it reduces the overhead of locking. The functions `pthread_rwlock_t, pthread_rwlock_rdlock, pthread_rwlock_wrlock`, and `pthread_rwlock_unlock` are used to manage this type of lock.
 
@@ -618,6 +708,8 @@ Here is a concise example of how to use pthread_rwlock_t and related functions i
 
 
 **Example: Read Write Locks**
+
+When data is read often but written rarely, a mutex is overly strict — it blocks readers that could safely run concurrently. A read-write lock allows many simultaneous readers but gives writers exclusive access.
 
 ```c
 #include <stdio.h>
@@ -682,11 +774,34 @@ int main() {
 }
 ```
 
+Output:
+```
+Reader 4: Read value = 0
+Reader 1: Read value = 0
+Reader 5: Read value = 0
+Reader 3: Read value = 0
+Reader 2: Read value = 0
+Writer 1: Updated value = 1
+Writer 2: Updated value = 2
+Reader 1: Read value = 2
+Reader 3: Read value = 2
+Writer 1: Updated value = 3
+Reader 2: Read value = 3
+Reader 2: Read value = 3
+Reader 3: Read value = 3
+Writer 2: Updated value = 4
+Reader 4: Read value = 4
+Reader 1: Read value = 4
+Reader 5: Read value = 4
+Reader 5: Read value = 4
+Reader 4: Read value = 4
+```
+
 Ref: 
 - https://stackoverflow.com/questions/12033188/how-would-you-implement-your-own-reader-writer-lock-in-c11
 
 
-## 8.4 Barriers
+## 9.4 Barriers
 
 A **barrier** makes a group of threads wait until _all_ of them arrive, then releases them together — ideal for phased/iterative parallel algorithms where every thread must finish phase _N_ before any starts phase _N+1_.
 
@@ -706,7 +821,7 @@ void *worker(void *arg) {
     time(&start);
     printf("Thread %ld: before sleep at %s", threadNum, ctime(&start));
     // Sleep for a random time
-    int nsecs = random() % 5 + 1;
+    int nsecs = rand() % 6 + 1;
     sleep(nsecs);
     time(&end);
     printf("Thread %ld: after sleep at %s", threadNum, ctime(&end));
@@ -717,6 +832,7 @@ void *worker(void *arg) {
 }
 
 int main(void) {
+    srand(time(0));
     pthread_t t[N];
     pthread_barrier_init(&bar, NULL, N);
     for (long i = 0; i < N; i++)
@@ -728,4 +844,291 @@ int main(void) {
 }
 ```
 
-## 8.5 Semaphores
+Output:
+```
+Thread 2: before sleep at Mon Jul 13 15:41:37 2026
+Thread 0: before sleep at Mon Jul 13 15:41:37 2026
+Thread 1: before sleep at Mon Jul 13 15:41:37 2026
+Thread 2: after sleep at Mon Jul 13 15:41:39 2026
+Thread 0: after sleep at Mon Jul 13 15:41:42 2026
+Thread 1: after sleep at Mon Jul 13 15:41:42 2026
+thread 1: phase 2 (all synced)
+thread 0: phase 2 (all synced)
+thread 2: phase 2 (all synced)
+```
+
+## 9.5 Semaphores
+
+A **semaphore** is a counter with two atomic operations: _wait_ (decrement, blocking at zero) and _post_ (increment). It generalizes a mutex — a binary semaphore (count 0/1) acts like a lock, while a counting semaphore limits access to _N_ identical resources. POSIX semaphores live in `<semaphore.h>`
+
+Semaphore usage pattern:
+```c
+#include <semaphore.h>
+
+sem_t sem;
+sem_init(&sem, 0, 3);      /* pshared=0 (threads), initial value 3 */
+
+sem_wait(&sem);            /* P: decrement; block while 0 */
+/* use one of the 3 permits */
+sem_post(&sem);            /* V: increment; wake a waiter */
+
+sem_destroy(&sem);
+```
+
+A semaphore limiting concurrency to 3:
+
+```c
+#include <pthread.h>
+#include <semaphore.h>
+#include <stdio.h>
+#include <unistd.h>
+
+static sem_t slots;                    /* at most 3 in the pool area */
+
+void *worker(void *arg) {
+    long id = (long)arg;
+    sem_wait(&slots);                  /* acquire a permit */
+    printf("Worker %ld entered\n", id);
+    sleep(1);                          /* hold the resource */
+    printf("Worker %ld leaving\n", id);
+    sem_post(&slots);                  /* release the permit */
+    return NULL;
+}
+
+int main(void) {
+    enum { N = 8 };
+    pthread_t t[N];
+    sem_init(&slots, 0, 3);            /* only 3 concurrent clients */
+    for (long i = 0; i < N; i++)
+        pthread_create(&t[i], NULL, worker, (void *)i);
+    for (int i = 0; i < N; i++)
+        pthread_join(t[i], NULL);
+    sem_destroy(&slots);
+    return 0;
+}
+
+```
+
+Output:
+```
+Worker 0 entered
+Worker 4 entered
+Worker 1 entered
+Worker 0 leaving
+Worker 4 leaving
+Worker 1 leaving
+Worker 2 entered
+Worker 3 entered
+Worker 6 entered
+Worker 2 leaving
+Worker 3 leaving
+Worker 6 leaving
+Worker 7 entered
+Worker 5 entered
+Worker 7 leaving
+Worker 5 leaving
+```
+
+## 9.6 Atomic Operations
+For simple shared variables (counters, flags), locking is overkill. C11 `<stdatomic.h>` provides **atomic types** whose operations are indivisible and properly ordered across threads — no mutex required.
+
+**Basic Usage:**
+```c
+#include <stdatomic.h>
+
+atomic_int counter = 0;
+
+atomic_fetch_add(&counter, 1);      /* counter += 1, atomically */
+int v = atomic_load(&counter);      /* read */
+atomic_store(&counter, 0);          /* write */
+
+/* Compare-and-swap: the backbone of lock-free algorithms */
+int expected = v;
+atomic_compare_exchange_strong(&counter, &expected, v + 1);
+```
+
+Rewriting the race-free counter without any lock:
+
+```c
+/* atomic.c — gcc -Wall atomic.c -o atomic -pthread */
+#include <pthread.h>
+#include <stdatomic.h>
+#include <stdio.h>
+
+static atomic_long counter = 0;
+
+void *bump(void *arg) {
+    (void)arg;
+    for (int i = 0; i < 1000000; i++)
+        atomic_fetch_add(&counter, 1);      /* lock-free, correct */
+    return NULL;
+}
+
+int main(void) {
+    pthread_t a, b;
+    pthread_create(&a, NULL, bump, NULL);
+    pthread_create(&b, NULL, bump, NULL);
+    pthread_join(a, NULL);
+    pthread_join(b, NULL);
+    printf("counter = %ld\n", atomic_load(&counter));  /* 2000000 */
+    return 0;
+}
+```
+
+Output:
+```
+counter = 2000000
+```
+
+## 9.7 Thread Local Storage
+
+Thread local storage (TLS) is a feature introduced in C++ 11 that allows each thread in a multi-threaded program to have its own separate instance of a variable. In simple words, we can say that each thread can have its own independent instance of a variable. Each thread can access and modify its own copy of the variable without interfering with other threads.
+
+Properties of Thread Local Storage (TLS)
+
+- Lifetime: The lifetime of a TLS variable begins when it is initialized and ends when the thread terminates.
+- Visibility: TLS variables have visibility at the thread level.
+- Scope: TLS variables have scope depending on where they are declared
+    
+```c
+#include <pthread.h>
+#include <stdio.h>
+#include <threads.h>
+
+thread_local int calls = 0;         /* independent in every thread */
+
+void *worker(void *arg) {
+    for (int i = 0; i < (int)(long)arg; i++)
+        calls++;                    /* touches only THIS thread's copy */
+    printf("thread %lu made %d calls\n",
+           (unsigned long)pthread_self(), calls);
+    return NULL;
+}
+
+int main(void) {
+    pthread_t a, b;
+    pthread_create(&a, NULL, worker, (void *)3);
+    pthread_create(&b, NULL, worker, (void *)7);
+    pthread_join(a, NULL);          /* prints 3 */
+    pthread_join(b, NULL);          /* prints 7 */
+    return 0;
+}
+```
+
+Output:
+```
+thread 136721526163008 made 3 calls
+thread 136721515677248 made 7 calls
+```
+
+Reference:
+- https://www.geeksforgeeks.org/cpp/thread_local-storage-in-cpp-11/
+
+### 9.8 One-Time Initialization
+
+To run an initializer exactly once even when many threads race to trigger it, use `pthread_once`:
+
+```c
+static pthread_once_t once = PTHREAD_ONCE_INIT;
+static FILE *log_file;
+
+static void open_log(void) {              /* runs exactly one time */
+    log_file = fopen("app.log", "a");
+}
+
+void log_msg(const char *s) {
+    pthread_once(&once, open_log);        /* first caller runs it; */
+    fprintf(log_file, "%s\n", s);         /* others wait then proceed */
+}
+```
+
+```cpp
+#include <pthread.h>
+#include <stdio.h>
+
+static pthread_once_t once = PTHREAD_ONCE_INIT;
+static int config;
+
+static void init_config(void) {
+    config = 42;
+    printf("init_config ran once\n");
+}
+
+static int worker(void *arg) {
+    int id = *(int *)arg;
+    pthread_once(&once, init_config);
+    printf("worker %d sees config=%d\n", id, config);
+    return 0;
+}
+
+int main(void) {
+    enum { N = 5 };
+    pthread_t t[N];
+    int id[N];
+
+    for (int i = 0; i < N; i++) {
+        id[i] = i;
+        pthread_create(&t[i], NULL, worker, &id[i]);
+    }
+    for (int i = 0; i < N; i++)
+        pthread_join(t[i], NULL);
+
+    return 0;
+}
+```
+The C11 equivalent is `call_once` with a `once_flag`. This is the correct, race-free way to do lazy singleton initialization.
+
+```c
+#include <pthread.h>
+#include <threads.h>
+#include <stdio.h>
+
+static once_flag init_flag = ONCE_FLAG_INIT;   /* mandatory static initializer */
+static int config;
+
+static void init_config(void)
+{
+    config = 42;                       /* expensive one-time setup */
+    printf("init_config ran once\n");
+}
+
+static int worker(void *arg)
+{
+    int id = *(int *)arg;
+    call_once(&init_flag, init_config); /* only the first caller runs init_config */
+    printf("worker %d sees config=%d\n", id, config);
+    return 0;
+}
+
+int main(void)
+{
+    enum { N = 5 };
+    pthread_t t[N];
+    int id[N];
+
+    for (int i = 0; i < N; i++) {
+        id[i] = i;
+        thrd_create(&t[i], worker, &id[i]);
+    }
+    for (int i = 0; i < N; i++)
+        thrd_join(t[i], NULL);
+
+    return 0;
+}
+```
+
+Output:
+```
+init_config ran once
+worker 0 sees config=42
+worker 4 sees config=42
+worker 2 sees config=42
+worker 1 sees config=42
+worker 3 sees config=42
+```
+
+Reference:
+- https://stackoverflow.com/questions/1228025/pthread-key-t-and-pthread-once-t
+
+
+
