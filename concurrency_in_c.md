@@ -1,5 +1,6 @@
 
 
+
 # Concurrency in C
 
 Concurrency is the ability of a computer system to execute multiple sequences of instructions simultaneously. This does not necessarily mean they are running at the exact same time (as in parallelism) but that the system manages multiple tasks to appear as though they are being executed at the same time.
@@ -695,7 +696,7 @@ Output:
 Ref:
 - https://www.geeksforgeeks.org/linux-unix/condition-wait-signal-multi-threading/
 
-## 9.3 Read-Write Locks
+### 9.3 Read-Write Locks
 
 A read-write lock in C using the POSIX threads (pthreads) library allows multiple threads to read a shared resource simultaneously while ensuring that only one thread can write at a time. This is particularly useful when the number of read operations is much higher than write operations, as it reduces the overhead of locking. The functions `pthread_rwlock_t, pthread_rwlock_rdlock, pthread_rwlock_wrlock`, and `pthread_rwlock_unlock` are used to manage this type of lock.
 
@@ -801,7 +802,7 @@ Ref:
 - https://stackoverflow.com/questions/12033188/how-would-you-implement-your-own-reader-writer-lock-in-c11
 
 
-## 9.4 Barriers
+### 9.4 Barriers
 
 A **barrier** makes a group of threads wait until _all_ of them arrive, then releases them together — ideal for phased/iterative parallel algorithms where every thread must finish phase _N_ before any starts phase _N+1_.
 
@@ -857,7 +858,7 @@ thread 0: phase 2 (all synced)
 thread 2: phase 2 (all synced)
 ```
 
-## 9.5 Semaphores
+### 9.5 Semaphores
 
 A **semaphore** is a counter with two atomic operations: _wait_ (decrement, blocking at zero) and _post_ (increment). It generalizes a mutex — a binary semaphore (count 0/1) acts like a lock, while a counting semaphore limits access to _N_ identical resources. POSIX semaphores live in `<semaphore.h>`
 
@@ -929,7 +930,7 @@ Worker 7 leaving
 Worker 5 leaving
 ```
 
-## 9.6 Atomic Operations
+### 9.6 Atomic Operations
 For simple shared variables (counters, flags), locking is overkill. C11 `<stdatomic.h>` provides **atomic types** whose operations are indivisible and properly ordered across threads — no mutex required.
 
 **Basic Usage:**
@@ -980,7 +981,7 @@ Output:
 counter = 2000000
 ```
 
-## 9.7 Thread Local Storage
+### 9.7 Thread Local Storage
 
 Thread local storage (TLS) is a feature introduced in C++ 11 that allows each thread in a multi-threaded program to have its own separate instance of a variable. In simple words, we can say that each thread can have its own independent instance of a variable. Each thread can access and modify its own copy of the variable without interfering with other threads.
 
@@ -1130,5 +1131,76 @@ worker 3 sees config=42
 Reference:
 - https://stackoverflow.com/questions/1228025/pthread-key-t-and-pthread-once-t
 
+
+## 10. Deadlocks and Race Conditions
+
+**Race condition** — the result depends on unsynchronized timing between threads (like the counter++ example). Fix by protecting all shared access with the same synchronization, or by using atomics.
+
+**Deadlock** — threads wait on each other forever. The classic case is lock-ordering: thread 1 holds A and wants B; thread 2 holds B and wants A. Neither can proceed.
+
+```c
+/* DEADLOCK: two threads acquire two mutexes in opposite orders */
+void *t1(void *_) {
+    pthread_mutex_lock(&A);
+    pthread_mutex_lock(&B);   /* waits for t2 to release B */
+    ...
+}
+void *t2(void *_) {
+    pthread_mutex_lock(&B);
+    pthread_mutex_lock(&A);   /* waits for t1 to release A */
+    ...
+}
+```
+
+## 11. C11 `<threads.h>`
+
+C11 standardized a threading API independent of POSIX. It's a thin,
+portable layer (a strict subset of pthreads functionality) — useful for
+code that must compile on non-POSIX platforms.
+
+Naming maps closely to pthreads:
+
+| POSIX | C11 `<threads.h>` |
+|---|---|
+| `pthread_t` | `thrd_t` |
+| `pthread_create` | `thrd_create` |
+| `pthread_join` | `thrd_join` |
+| `pthread_detach` | `thrd_detach` |
+| `pthread_exit` | `thrd_exit` |
+| `pthread_mutex_t` | `mtx_t` |
+| `pthread_mutex_lock` | `mtx_lock` |
+| `pthread_cond_t` | `cnd_t` |
+| `pthread_cond_wait` | `cnd_wait` |
+| `pthread_key_t` / TLS | `tss_t`, `thread_local` |
+| `pthread_once` | `call_once` |
+
+A key difference: a C11 thread function has signature `int (*)(void *)` — it takes a `void *` and returns an `int` (not a `void *`).
+
+```c
+/* c11threads.c — gcc -Wall c11threads.c -o c11threads -pthread */
+#include <threads.h>
+#include <stdio.h>
+
+int worker(void *arg) {
+    int n = *(int *)arg;
+    printf("C11 thread got %d\n", n);
+    return n * 2;                       /* returned via thrd_join */
+}
+
+int main(void) {
+    thrd_t t;
+    int arg = 21;
+
+    if (thrd_create(&t, worker, &arg) != thrd_success) {
+        fprintf(stderr, "thrd_create failed\n");
+        return 1;
+    }
+
+    int result;
+    thrd_join(t, &result);              /* result <- worker's return */
+    printf("thread returned %d\n", result);
+    return 0;
+}
+```
 
 
