@@ -452,69 +452,86 @@ Each setter has a matching getter (`pthread_attr_getstacksize`, etc.). Setting a
 
 **Example: Thread scheduling**
 ```c
-#include <stdio.h>
-#include <stdlib.h>
+#include "scheduling_thread_2.h"
+
+#define _GNU_SOURCE
 #include <pthread.h>
 #include <sched.h>
-#include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 typedef struct {
     int id;
+    int prio;
 } task_arg;
 
-void* threadFunction(void* arg) {
-    int id = ((task_arg*)arg)->id;
-    printf("Thread is running id = %d\n", id);
-    sleep(2);
-    printf("Thread is finishing id = %d\n", id);
-    pthread_exit(NULL);
+static void burn(void) {                 /* CPU-bound, no syscalls */
+    volatile double x = 0;
+    for (long i = 0; i < 300000000L; i++) x += i * 0.5;
+}
+
+void *threadFunction(void *arg) {
+    task_arg *a = arg;
+    printf("  START  id=%d prio=%d\n", a->id, a->prio);
+    burn();
+    printf("    FINISH id=%d prio=%d\n", a->id, a->prio);
+    return NULL;
 }
 
 int main(void) {
     enum { N = 5 };
     pthread_t t[N];
     task_arg args[N];
-
-    pthread_attr_t attr;
+    cpu_set_t cpus;
     struct sched_param param;
-    int policy;
+    int lo = sched_get_priority_min(SCHED_FIFO);
 
-    // Initialize the attribute object
-    pthread_attr_init(&attr);
-
-    // Set the scheduling policy to SCHED_FIFO
-    pthread_attr_setschedpolicy(&attr, SCHED_FIFO);
-
-    // Set the priority
-    int maxPriority = sched_get_priority_max(SCHED_FIFO);
-    int minPriority = sched_get_priority_min(SCHED_FIFO);
-    param.sched_priority = (maxPriority + minPriority) / 2;
-    pthread_attr_setschedparam(&attr, &param);
-
-    int status = pthread_attr_setstacksize(&attr, 1024 * 1024);
-    if (status != 0) {
-        fprintf(stderr, "Error setting stack size\n");
-        exit(EXIT_FAILURE);
+    /* main runs above every worker, so the loop finishes
+       before any worker is allowed to start */
+    param.sched_priority = lo + N + 1;
+    if (sched_setscheduler(0, SCHED_FIFO, &param) != 0) {
+        perror("sched_setscheduler (run with sudo?)");
+        exit(1);
     }
-    
-    // Create the thread with the specified attributes
+
+    CPU_ZERO(&cpus);
+    CPU_SET(0, &cpus);                   /* everyone on CPU 0 */
+
     for (int i = 0; i < N; i++) {
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED);  /* the key line */
+        pthread_attr_setschedpolicy(&attr, SCHED_FIFO);
+        pthread_attr_setaffinity_np(&attr, sizeof(cpus), &cpus);
+
         args[i].id = i;
-        int status = pthread_create(&t[i], &attr, threadFunction, &args[i]);
-        if (status != 0) {
-            printf("Error creating thread\n");
-            exit(-1);
-        }
+        args[i].prio = lo + 1 + i;       /* thread 4 highest, thread 0 lowest */
+        param.sched_priority = args[i].prio;
+        pthread_attr_setschedparam(&attr, &param);
+
+        int rc = pthread_create(&t[i], &attr, threadFunction, &args[i]);
+        if (rc != 0) { fprintf(stderr, "create: %s\n", strerror(rc)); exit(1); }
+        pthread_attr_destroy(&attr);
     }
 
-    // Destroy the attribute object
-    pthread_attr_destroy(&attr);
-
-    // Wait for the thread to finish
-    for (int i = 0; i < N; i++)
-        pthread_join(t[i], NULL);
+    for (int i = 0; i < N; i++) pthread_join(t[i], NULL);
     return 0;
 }
+```
+
+**Output:**
+```
+  START  id=0 prio=2
+  START  id=1 prio=3
+  START  id=2 prio=4
+  START  id=3 prio=5
+  START  id=4 prio=6
+    FINISH id=4 prio=6
+    FINISH id=3 prio=5
+    FINISH id=2 prio=4
+    FINISH id=1 prio=3
+    FINISH id=0 prio=2
 ```
 
 ## 8. Thread Pool
