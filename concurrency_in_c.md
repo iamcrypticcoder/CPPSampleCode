@@ -1,11 +1,34 @@
+# Introduction
 
+Based on my work on several C/C++ projects over the years, I found multi-threading in C and achieving true concurrency without any subtle race conditons and deadlocks are truly challenging. I still remember spending several days on a single issue related to race condition while accumulating data packets over BLE and finally applying proper mutex and other necessary modification of code resolved the issue.  
 
-
-# Concurrency in C
+# Concurrency In C
 
 Concurrency is the ability of a computer system to execute multiple sequences of instructions simultaneously. This does not necessarily mean they are running at the exact same time (as in parallelism) but that the system manages multiple tasks to appear as though they are being executed at the same time.
 
 Concurrency improves the efficiency and responsiveness of programs.
+
+## Table of Contents
+
+1. [Processes vs. Threads](#1-processes-vs-threads)
+2. [Creating and Running a Thread](#2-creating-and-running-a-thread)
+3. [Passing Arguments and Return Value](#3-passing-arguments-and-return-value)
+4. [Joining, Waiting, and Detaching](#4-joining-waiting-and-detaching)
+5. [Terminating and Canceling Threads](#5-terminating-and-canceling-threads)
+6. [Thread Attributes](#6-thread-attributes)
+7. [Thread Scheduling](#7-thread-scheduling)
+8. [Thread Pool](#8-thread-pool)
+9. [Thread Synchronization](#9-thread-synchronization)
+    - [9.1 Mutexes](#91-mutexes)
+    - [9.2 Condition Variables](#92-condition-variables)
+    - [9.3 Read-Write Locks](#93-read-write-locks)
+    - [9.4 Barriers](#94-barriers)
+    - [9.5 Semaphores](#95-semaphores)
+    - [9.6 Atomic Operations](#96-atomic-operations)
+    - [9.7 Thread Local Storage](#97-thread-local-storage)
+    - [9.8 One-Time Initialization](#98-one-time-initialization)
+10. [Deadlocks and Race Conditions](#10-deadlocks-and-race-conditions)
+11. [C11 `<threads.h>`](#11-c11-threadsh)
 
 
 ## 1. Processes vs. Threads
